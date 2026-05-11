@@ -19,16 +19,12 @@ jobs:
           - platform: 2
             platform_name: ios
     
-    runs-on: macos-latest
+    runs-on: macos-14
     steps:
       - name: Remove work folders
         run: |
-          echo "before"
-          ls -lah ./
           rm -rf ./* || true
           rm -rf ./.??* || true
-          echo "after"
-          ls -lah ./
           
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -46,54 +42,27 @@ jobs:
         run: |
           brew install make cmake ldid wget lz4
 
+      - name: Fix Source Code (Xcode 16+ compatibility)
+        run: |
+          # Вставляем необходимый заголовок в начало файла, чтобы исправить ошибки компиляции
+          sed -i '' '1i\
+          #import <mach/mach.h>
+          ' Natives/JavaLauncher.m
+          
+          # Также отключаем строгость компилятора к неявным декларациям
+          export CFLAGS="$CFLAGS -Wno-error=implicit-function-declaration"
+
       - name: Get gl4es latest commit hash
         id: gl4es-sha
         run: echo "sha=$(git ls-remote https://github.com/PojavLauncherTeam/gl4es-114-extra refs/heads/master | grep -io '^\S*')" >> $GITHUB_OUTPUT
         shell: bash
-
-      - name: Cache gl4es
-        uses: actions/cache@v4
-        if: false
-        id: gl4es-cache
-        with:
-          path: gl4es/libs
-          key: gl4es-holy-ios-shared-2-${{ steps.gl4es-sha.outputs.sha }}
-
-      - name: Get gl4es
-        if: false && steps.gl4es-cache.outputs.cache-hit != 'true'
-        uses: actions/checkout@v4
-        with:
-          repository: 'PojavLauncherTeam/gl4es-114-extra'
-          path: 'gl4es'
-
-      - name: Build gl4es
-        if: false && steps.gl4es-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        run: |
-          cd gl4es
-          git config user.email "github-actions@users.noreply.github.com"
-          git config user.name "github-actions"
-          export PATH=/opt/procursus/bin:$PATH
-          wget https://github.com/leetal/ios-cmake/raw/master/ios.toolchain.cmake
-          cmake -B build -DCMAKE_TOOLCHAIN_FILE=ios.toolchain.cmake -DDEFAULT_ES=2 \
-            -DNOX11=ON -DNOEGL=OFF -DSTATICLIB=OFF -DPLATFORM=OS64 \
-            -DCMAKE_C_FLAGS=-Wno-error=implicit-function-declaration
-          cmake --build build --config RelWithDebInfo --target GL
-          cp -R lib/libGL.dylib ../Natives/resources/Frameworks/libgl4es_114.dylib
-          
-      - name: Push gl4es
-        if: false && github.event != 'pull_request' && github.ref_name == 'main' && steps.gl4es-cache.outputs.cache-hit != 'true'
-        continue-on-error: true
-        run: |
-          git add Natives/resources/Frameworks/libgl4es_114.dylib
-          git commit -am "CI: Update gl4es"
-          git push
 
       - name: Build for ${{ matrix.platform_name }}
         run: |
           export JAVA_HOME=${JAVA_HOME_8_X64:-$JAVA_HOME}
           export PATH=$JAVA_HOME/bin:/opt/homebrew/bin:$PATH
           export SLIMMED=1
+          export CFLAGS="-Wno-error=implicit-function-declaration"
           
           # Фикс Makefile: заменяем вызов системного java_home на нашу переменную
           sed -i '' "s|\$(shell /usr/libexec/java_home -v 1.8)|$JAVA_HOME|g" Makefile || true
@@ -110,12 +79,10 @@ jobs:
 
       - name: Inject Sable Dylib
         run: |
-          # Проверяем наличие файла перед распаковкой
           if [ ! -f "sable_rapier_binaries.zip.l4z" ]; then
-            echo "Error: sable_rapier_binaries.zip.l4z not found in root directory!"
+            echo "Error: sable_rapier_binaries.zip.l4z not found!"
             exit 1
           fi
-
           lz4 -d sable_rapier_binaries.zip.l4z sable_rapier_binaries.zip
           unzip -q sable_rapier_binaries.zip -d sable_natives
           
@@ -128,3 +95,15 @@ jobs:
               mkdir -p "$APP_DIR/Frameworks"
               find ../sable_natives -name "sable_rapier_aarch64_macos.dylib" -exec cp {} "$APP_DIR/Frameworks/" \;
               cd tmp_extract
+              zip -qr "../$file" Payload
+              cd ..
+              rm -rf tmp_extract
+            fi
+          done
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Amethyst-Custom-Build
+          path: artifacts/*
