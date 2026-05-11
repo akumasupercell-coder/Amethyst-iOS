@@ -4,7 +4,7 @@ on:
   pull_request:
     branches-ignore:
       - 'l10n_main'
-    types: [opened, reopened]
+    types:[opened, reopened]
   push:
     branches-ignore:
       - 'l10n_main'
@@ -19,7 +19,7 @@ jobs:
           - platform: 2
             platform_name: ios
     
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - name: Remove work folders
         run: |
@@ -53,7 +53,7 @@ jobs:
 
       - name: Cache gl4es
         uses: actions/cache@v4
-        if: false # use gl4es 1.1.5
+        if: false
         id: gl4es-cache
         with:
           path: gl4es/libs
@@ -91,30 +91,28 @@ jobs:
 
       - name: Build for ${{ matrix.platform_name }}
         run: |
-          # Принудительно передаем пути Java 8 для Makefile
           export JAVA_HOME=${JAVA_HOME_8_X64:-$JAVA_HOME}
           export PATH=$JAVA_HOME/bin:/opt/homebrew/bin:$PATH
           export SLIMMED=1
           
-          if[ "${{ matrix.platform_name }}" == "ios" ]; then
-            # Build ipa and tipa for iOS
-            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }}
-            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} TROLLSTORE_JIT_ENT=1
-          elif[ "${{ matrix.platform_name }}" == "tvos" ]; then
-            # Build tipa only for tvOS
-            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} TROLLSTORE_JIT_ENT=1
+          # ЧИНИМ MAKEFILE: Удаляем системную проверку Apple и подставляем нашу Java
+          sed -i '' 's|$(shell /usr/libexec/java_home -v 1.8)|'"$JAVA_HOME"'|g' Makefile || true
+          sed -i '' 's|$(shell /usr/libexec/java_home -v 1.8.0)|'"$JAVA_HOME"'|g' Makefile || true
+          
+          if [ "${{ matrix.platform_name }}" == "ios" ]; then
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} JAVA_HOME="$JAVA_HOME"
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} TROLLSTORE_JIT_ENT=1 JAVA_HOME="$JAVA_HOME"
+          elif [ "${{ matrix.platform_name }}" == "tvos" ]; then
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} TROLLSTORE_JIT_ENT=1 JAVA_HOME="$JAVA_HOME"
           else
-            # Build ipa only for everything else
-            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }}
+            gmake -j$(sysctl -n hw.ncpu) dsym package PLATFORM=${{ matrix.platform }} JAVA_HOME="$JAVA_HOME"
           fi
 
       - name: Inject Sable Dylib
         run: |
-          # Распаковываем библиотеку из архива мода
           lz4 -d sable_rapier_binaries.zip.l4z sable_rapier_binaries.zip
           unzip -q sable_rapier_binaries.zip -d sable_natives
           
-          # Заходим в папку с готовыми IPA-файлами и вшиваем библиотеку в каждый!
           cd artifacts
           for file in *.{ipa,tipa}; do
             if [ -f "$file" ]; then
